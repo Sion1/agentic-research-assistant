@@ -299,9 +299,26 @@ git push -u origin main
 # 3. flip the auto-push flag in state/.env (loop.sh sources this)
 echo "export AUTORES_GIT_AUTOPUSH=1" >> state/.env
 
-# 4. authenticate gh CLI so PRs can be auto-created
+# 4. authenticate gh CLI (lets autoresearch-bot create PRs)
 gh auth login
+
+# 5. wire git itself to use gh's credentials (REQUIRED — gh auth login
+#    alone does NOT configure git. Without this, `git push` over HTTPS
+#    will prompt for a password, GitHub rejects passwords since 2021-08,
+#    and you'll see "Password authentication is not supported".)
+gh auth setup-git
 ```
+
+**Common pitfalls when doing this manually:**
+
+- `git push` over HTTPS prompts for a password → you skipped step 5
+  (`gh auth setup-git`). Run it and retry.
+- `remote: Repository not found` on push → the GitHub repo doesn't
+  exist yet. Create it with `gh repo create Sion1/<name> --public`
+  (or `--private`) before pushing.
+- Typos in the repo name go silently into `git remote add` and only
+  surface at push time. Fix with `git remote set-url origin <correct-url>`,
+  no need to remove and re-add.
 
 Re-running the interactive setup is equivalent and updates `state/.env`
 for you:
