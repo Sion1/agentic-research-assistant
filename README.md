@@ -117,6 +117,20 @@ checkouts with state are unaffected.
 
 You can re-run the script anytime to change your choices.
 
+**For agents (no TTY available):** pass `--non-interactive` plus the
+choices as flags:
+
+```bash
+bash scripts/first_launch_setup.sh --non-interactive \
+    --python "$(which python3)" \
+    --data-root ./data \
+    --skip-gpus 0,2 \
+    --no-wandb --git --no-push
+```
+
+A ready-to-paste agent prompt that drives the whole reproduction is in
+[`docs/AGENT_REPRO_PROMPT.md`](docs/AGENT_REPRO_PROMPT.md).
+
 ### 3. Smoketest with a single epoch
 
 After onboarding, verify the pipeline end-to-end on a single epoch

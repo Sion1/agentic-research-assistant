@@ -49,15 +49,124 @@ prompt_str() {
     printf '%s' "${reply:-$def}"
 }
 
-if [ ! -t 0 ]; then
+# ----------------------------------------------------------------------------
+# Non-interactive mode
+#
+# Agents (and CI) cannot drive a TTY-only Q&A. Pass --non-interactive plus the
+# choices as flags / env vars; the script then skips all prompts and writes
+# state/.env + state/.onboarding_done with the supplied values. Defaults below
+# match the interactive path's defaults.
+#
+# Flags (non-interactive only):
+#   --non-interactive            enable this mode
+#   --python <path>              Python interpreter (must import torch + torchvision)
+#   --data-root <dir>            dataset root (default ./data)
+#   --skip-gpus <csv>            GPU indices to force-skip (default empty)
+#   --wandb                      enable wandb (will REQUIRE WANDB_API_KEY env)
+#   --no-wandb                   disable wandb (default)
+#   --wandb-project <name>       wandb project name (default agentic-research-cifar10-demo)
+#   --git                        enable per-iter git (default)
+#   --no-git                     disable per-iter git
+#   --push                       enable git auto-push (REQUIRES --remote-url or existing origin)
+#   --no-push                    disable git auto-push (default)
+#   --remote-url <url>           GitHub remote URL (only used with --push)
+# ----------------------------------------------------------------------------
+NONINT=0
+NI_PYTHON="${PYTHON:-$(command -v python3 || echo python3)}"
+NI_DATA_ROOT="./data"
+NI_SKIP_GPUS=""
+NI_WANDB=0
+NI_WANDB_PROJECT="agentic-research-cifar10-demo"
+NI_GIT=1
+NI_PUSH=0
+NI_REMOTE_URL=""
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --non-interactive)  NONINT=1; shift ;;
+        --python)           NI_PYTHON="$2"; shift 2 ;;
+        --data-root)        NI_DATA_ROOT="$2"; shift 2 ;;
+        --skip-gpus)        NI_SKIP_GPUS="$2"; shift 2 ;;
+        --wandb)            NI_WANDB=1; shift ;;
+        --no-wandb)         NI_WANDB=0; shift ;;
+        --wandb-project)    NI_WANDB_PROJECT="$2"; shift 2 ;;
+        --git)              NI_GIT=1; shift ;;
+        --no-git)           NI_GIT=0; shift ;;
+        --push)             NI_PUSH=1; shift ;;
+        --no-push)          NI_PUSH=0; shift ;;
+        --remote-url)       NI_REMOTE_URL="$2"; shift 2 ;;
+        -h|--help)
+            sed -n '1,/^# ---/p' "$0" | sed 's/^# \?//'; exit 0 ;;
+        *) echo "unknown arg: $1" >&2; exit 2 ;;
+    esac
+done
+
+if [ "$NONINT" = 0 ] && [ ! -t 0 ]; then
     echo "ERROR: this script must run interactively (a TTY is required)." >&2
-    echo "       run it directly in your shell, not via pipe / nohup."   >&2
+    echo "       For agents/CI: pass --non-interactive plus --python / --data-root /" >&2
+    echo "                      --skip-gpus / --wandb|--no-wandb / --git|--no-git /" >&2
+    echo "                      --push|--no-push (see header for full flag list)."  >&2
     exit 2
 fi
 
 mkdir -p state
 ENV_FILE=state/.env
 : > "$ENV_FILE"
+
+# ---- Non-interactive fast path ---------------------------------------------
+if [ "$NONINT" = 1 ]; then
+    echo "[setup] non-interactive mode"
+    if ! "$NI_PYTHON" -c 'import torch, torchvision' >/dev/null 2>&1; then
+        echo "ERROR: '$NI_PYTHON' cannot import torch + torchvision" >&2
+        exit 3
+    fi
+    TORCH_VER=$("$NI_PYTHON" -c 'import torch; print(torch.__version__)')
+    CUDA_OK=$("$NI_PYTHON" -c 'import torch; print(torch.cuda.is_available())')
+    mkdir -p "$NI_DATA_ROOT" || { echo "ERROR: cannot create $NI_DATA_ROOT" >&2; exit 4; }
+
+    {
+        echo "export PYTHON=$NI_PYTHON"
+        echo "export AUTORES_DATA_ROOT=$NI_DATA_ROOT"
+        [ -n "$NI_SKIP_GPUS" ] && echo "export AUTORES_SKIP_GPUS=$NI_SKIP_GPUS"
+        if [ "$NI_WANDB" = 1 ]; then
+            if ! "$NI_PYTHON" -c 'import wandb' >/dev/null 2>&1; then
+                echo "ERROR: --wandb requested but wandb not importable from $NI_PYTHON" >&2
+                exit 5
+            fi
+            if [ -z "${WANDB_API_KEY:-}" ]; then
+                echo "ERROR: --wandb requested but WANDB_API_KEY env not set" >&2
+                exit 6
+            fi
+            echo "export WANDB_PROJECT=$NI_WANDB_PROJECT"
+        fi
+        echo "export AUTORES_GIT_AUTOPUSH=$NI_PUSH"
+    } > "$ENV_FILE"
+
+    if [ "$NI_GIT" = 1 ]; then
+        if [ ! -d .git ] && [ ! -f .git ]; then
+            git init -b main 2>/dev/null || git init
+        fi
+        git config user.name  >/dev/null 2>&1 || git config user.name  "autoresearch"
+        git config user.email >/dev/null 2>&1 || git config user.email "autoresearch@localhost"
+        if [ "$NI_PUSH" = 1 ] && [ -n "$NI_REMOTE_URL" ]; then
+            git remote get-url origin >/dev/null 2>&1 || git remote add origin "$NI_REMOTE_URL"
+        fi
+    fi
+
+    {
+        echo "onboarding_done_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+        echo "mode=non-interactive"
+        echo "python=$NI_PYTHON"
+        echo "torch=$TORCH_VER"
+        echo "cuda_available=$CUDA_OK"
+        echo "data_root=$NI_DATA_ROOT"
+        echo "wandb_enabled=$NI_WANDB"
+        echo "git_enabled=$NI_GIT"
+        echo "git_autopush_enabled=$NI_PUSH"
+    } > state/.onboarding_done
+    echo "[setup] state/.env + state/.onboarding_done written. Done."
+    exit 0
+fi
 
 echo
 printf "%b== agentic-research-assistant first-launch setup ==%b\n" "$BOLD" "$NC"
