@@ -11,7 +11,7 @@ The wrapper run_experiment.sh adds extra safety (GPU selection, OOM preflight,
 state.tsv update). See run_experiment.sh for the loop-integrated invocation.
 """
 from __future__ import annotations
-import argparse, json, pathlib, sys, time
+import argparse, json, os, pathlib, sys, time
 import yaml, torch, torch.nn as nn
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
@@ -19,6 +19,15 @@ from src.cifar_demo.data import build_cifar10
 from src.cifar_demo.model import build_resnet34
 from src.cifar_demo.trainer import build_optimizer, build_scheduler, train_one_epoch, evaluate
 from src.cifar_demo.utils import set_seed, write_finish_line, pick_device
+
+# Optional wandb integration. Activate by either setting WANDB_PROJECT env var
+# or adding `wandb: { project: <name> }` to your config. If wandb isn't
+# installed or no project is configured, training silently skips logging.
+try:
+    import wandb
+    _WANDB_AVAILABLE = True
+except ImportError:
+    _WANDB_AVAILABLE = False
 
 
 def _load_config(path: str) -> dict:
@@ -67,6 +76,27 @@ def main():
     run_dir.mkdir(parents=True, exist_ok=True)
     print(f"[train] run_dir={run_dir} epochs={epochs}", flush=True)
 
+    # ---- optional wandb run ----
+    wandb_run = None
+    wandb_cfg = cfg.get("wandb", {}) if isinstance(cfg.get("wandb"), dict) else {}
+    wandb_project = wandb_cfg.get("project") or os.environ.get("WANDB_PROJECT")
+    if _WANDB_AVAILABLE and wandb_project:
+        try:
+            wandb_run = wandb.init(
+                project=wandb_project,
+                name=exp_name,
+                config=cfg,
+                reinit=True,
+                dir=str(run_dir),
+                tags=wandb_cfg.get("tags") or [],
+            )
+            print(f"[train] wandb run = {wandb_run.url}", flush=True)
+        except Exception as e:
+            print(f"[train] wandb init failed ({e!r}); continuing without wandb", flush=True)
+            wandb_run = None
+    elif _WANDB_AVAILABLE and not wandb_project:
+        print("[train] wandb installed but WANDB_PROJECT not set — skipping (set env or cfg.wandb.project)", flush=True)
+
     # ---- train ----
     history = []
     best = {"acc": 0.0, "epoch": -1}
@@ -84,6 +114,8 @@ def main():
                   f"train_acc={train_stats['acc']:.4f}  test_loss={eval_stats['loss']:.4f}  "
                   f"test_acc={eval_stats['acc']:.4f}  ({train_stats['elapsed']:.1f}s)",
                   flush=True)
+            if wandb_run is not None:
+                wandb_run.log(row, step=ep)
 
             if eval_stats["acc"] > best["acc"]:
                 best = {"acc": eval_stats["acc"], "epoch": ep}
@@ -111,6 +143,10 @@ def main():
         }, run_dir / "final.pth")
         (run_dir / "history.json").write_text(json.dumps(history, indent=2))
         print(f"[train] saved {run_dir/'final.pth'}  best_acc={best['acc']:.4f} (epoch {best['epoch']})", flush=True)
+        if wandb_run is not None:
+            wandb_run.summary["best_acc"]   = best["acc"]
+            wandb_run.summary["best_epoch"] = best["epoch"]
+            wandb_run.finish()
         write_finish_line(args.iter_num, rc=rc)
     return rc
 

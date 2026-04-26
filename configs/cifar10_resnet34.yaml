@@ -26,3 +26,10 @@ training:
 
 output:
   root: runs
+
+# Optional W&B tracking. Either uncomment + edit below, OR set the env var
+# WANDB_PROJECT=<name> when running. Either is sufficient. Without both,
+# train.py logs to runs/<exp>/history.json only.
+# wandb:
+#   project: agentic-research-cifar10-demo
+#   tags: [baseline]

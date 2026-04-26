@@ -30,7 +30,8 @@ agentic-research-assistant/
 │   ├── generate_experiment_tree_web.{sh,py}  ← framework (adapt parser)
 │   ├── serve_dashboard.py           ← framework (optional editor)
 │   ├── visualize_tsne.py            ← demo: feature t-SNE
-│   └── visualize_cam.py             ← demo: Grad-CAM
+│   ├── visualize_cam.py             ← demo: Grad-CAM
+│   └── watch_loop.py                ← framework: live loop monitor (read-only)
 ├── docs/
 │   ├── autoresearch_design_by_claude/   ← task-specific flowcharts (example)
 │   ├── codex_flowcharts/                ← codex's review flowcharts
@@ -53,13 +54,46 @@ the same loop will drive *your* research.
 
 ### 1. Install dependencies
 
+**Required (steps 2–4 — single-experiment + visualization)**:
+
 ```bash
 pip install torch torchvision pyyaml scikit-learn matplotlib
 ```
 
-(plus an LLM CLI of your choice — `claude` / `codex` / `gemini` — if you
-want the loop to call agents. The framework *runs* without an LLM, but the
-analyze and propose steps need one.)
+**Required for step 5 (the autonomous loop)**:
+
+You need at least one LLM CLI installed and authenticated. The loop's
+`analyze`, `consensus`, and `propose` phases each spawn `claude -p` /
+`codex exec` / `gemini -p` subprocesses; without one of them the loop
+will refuse to tick (the `claude` binary is checked first; you can
+remove that hard requirement by editing `loop.sh:104-106`).
+
+| LLM | Install / auth | Used for |
+|---|---|---|
+| **Claude Code** (recommended primary) | <https://docs.claude.com/en/docs/claude-code/setup> · login: `claude /login` | analyze · propose · main of consensus |
+| **Codex CLI** (recommended secondary) | `npm install -g @openai/codex` · login: `codex auth login` | consensus eval round |
+| **Gemini CLI** (optional 3rd reviewer) | `npm install -g @google/gemini-cli` · login: `gemini auth` | consensus eval round |
+
+Verify:
+```bash
+claude --version       # must succeed for loop.sh
+codex --version        # optional, used in consensus_iter.sh
+gemini --version       # optional
+```
+
+**Optional — Weights & Biases tracking**:
+
+`train.py` will log per-epoch train/test loss & acc to W&B if (a) `wandb`
+is importable, AND (b) `WANDB_PROJECT` is set OR `wandb.project` is in
+the YAML config. Without both, training silently falls back to local
+`history.json`.
+
+```bash
+pip install wandb
+wandb login                              # paste your API key from wandb.ai/authorize
+export WANDB_PROJECT=agentic-research-cifar10-demo
+# or in YAML: wandb: { project: my-project, tags: [demo] }
+```
 
 ### 2. Run a single experiment manually
 
@@ -89,11 +123,28 @@ bash scripts/generate_experiment_tree_web.sh
 
 ### 5. Hand the wheel to the loop
 
+> **Prerequisite:** at least `claude` (and ideally also `codex` /
+> `gemini`) installed and authenticated — see step 1. The loop *will not
+> start* without `claude` on PATH.
+
 ```bash
+# one-time host setup
 mkdir -p state && touch state/.loop.enabled.$(hostname)
+
+# (optional) preconfigure consensus mode
+cat > state/.consensus.env <<'EOF'
+AUTORES_CONSENSUS_ENABLED=1
+AUTORES_CONSENSUS_EVAL_AGENTS=claude,codex,gemini
+AUTORES_CONSENSUS_TIMEOUT=900
+EOF
+
+# launch the supervisor in tmux
 tmux new-session -d -s autores "
     export AUTORES_HOST_TAG=$(hostname)
     export MAX_CONCURRENT=2
+    export AUTORES_MAX_ITERATIONS=30
+    export AUTORES_TARGET_METRIC=0.96
+    export AUTORES_TARGET_DIRECTION=max
     while true; do bash loop.sh; sleep 300; done
 "
 ```
@@ -101,6 +152,26 @@ tmux new-session -d -s autores "
 The loop ticks every 5 min: reaps finished trainings, calls an LLM to analyze
 each one, runs a 5-cycle multi-agent consensus on the next-step, then proposes
 and launches the next experiment.
+
+### 6. Watch the loop in real time
+
+While the loop runs, this shows a single-screen status board (wrapper
+status, sentinel/lock state, ledger summary, running iters, GPU load,
+recent driver-log activity, consensus jobs in flight):
+
+```bash
+python3 scripts/watch_loop.py                  # 5 s refresh (default)
+python3 scripts/watch_loop.py --interval 2     # 2 s refresh
+python3 scripts/watch_loop.py --once           # snapshot, no live refresh
+```
+
+The script is **read-only** — it never touches `state/`, never spawns
+subprocesses that hold the tick lock, never blocks loop ticks. Safe to
+keep open in a side tmux pane indefinitely.
+
+If you set up wandb in step 1, you can also watch live curves at
+[wandb.ai](https://wandb.ai) under your project — each iter becomes its
+own run with the iter's `exp_name`.
 
 ---
 
