@@ -15,7 +15,11 @@
 #
 # Env knobs:
 #   AUTORES_SKIP_GPUS                  ← comma-sep GPU indices to skip
-#   AUTORES_MIN_FREE_MB        24000   ← only consider GPUs with this much free
+#   AUTORES_MIN_FREE_MB         8000   ← only consider GPUs with this much free
+#                                       (sized for the CIFAR-10 ResNet-34 demo,
+#                                        which needs ~2-3 GB. Raise for larger
+#                                        models — e.g. 22000 for ViT-B at 448²,
+#                                        24000 for DINO + attribute prototype)
 #   AUTORES_PER_PROCESS_FOOTPRINT_MB   ← OOM preflight cap (in MB)
 #   AUTORES_LAUNCH_COOLDOWN_S  30      ← refuse if last launch was < N s ago (set 0 to disable)
 #   AUTORES_ALLOW_GPU_STACK    0       ← if 1, allow same-GPU stacking (escape hatch)
@@ -79,7 +83,7 @@ fi
 
 # ------- GPU selection --------------------------------------------------
 SKIP_GPUS="${AUTORES_SKIP_GPUS-}"
-MIN_FREE_MB="${AUTORES_MIN_FREE_MB:-24000}"
+MIN_FREE_MB="${AUTORES_MIN_FREE_MB:-8000}"
 
 # Build the set of GPUs already occupied by sibling train.py processes
 # launched from THIS repo (Guard A: same-GPU stack prevention). We grep for
