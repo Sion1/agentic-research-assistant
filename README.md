@@ -311,14 +311,56 @@ gh auth setup-git
 
 **Common pitfalls when doing this manually:**
 
+- `state/.env: No such file or directory` → run `scripts/first_launch_setup.sh`
+  first (it creates `state/`), or just `mkdir -p state` before the `echo` line.
+- `gh: command not found` → see the **No-gh fallback** below.
 - `git push` over HTTPS prompts for a password → you skipped step 5
-  (`gh auth setup-git`). Run it and retry.
+  (`gh auth setup-git`). Run it and retry. (Or use the PAT path in the fallback.)
 - `remote: Repository not found` on push → the GitHub repo doesn't
   exist yet. Create it with `gh repo create Sion1/<name> --public`
-  (or `--private`) before pushing.
+  (or `--private`) before pushing — or via the GitHub web UI.
 - Typos in the repo name go silently into `git remote add` and only
   surface at push time. Fix with `git remote set-url origin <correct-url>`,
   no need to remove and re-add.
+
+#### No-gh fallback (if you can't / don't want to install gh)
+
+```bash
+# 1. Create the empty repo via web UI:
+#      https://github.com/new   →  name it, Public/Private, do NOT init README
+
+# 2. Create a Personal Access Token via web UI:
+#      https://github.com/settings/tokens/new
+#      scope: tick [x] repo
+#      copy the token (shown ONCE)
+
+# 3. Cache the credentials so you only paste the PAT once:
+git config --global credential.helper store
+
+# 4. Push (Username = your GitHub login; Password = the PAT, NOT your account password):
+cd /path/to/agent-test
+git remote set-url origin https://github.com/<you>/<repo>.git
+git push -u origin main
+```
+
+The autoresearch loop's auto-PR feature uses `gh api`, so without gh you
+get auto-pushes but not auto-PRs. You can still review iter branches on
+GitHub; just open PRs manually when you want to merge.
+
+#### Installing gh (one-time, recommended)
+
+```bash
+# Debian/Ubuntu — official source
+type curl || apt install -y curl
+curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+  | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+  > /etc/apt/sources.list.d/github-cli.list
+apt update && apt install -y gh
+
+# macOS:    brew install gh
+# Conda:    conda install -c conda-forge gh
+```
 
 Re-running the interactive setup is equivalent and updates `state/.env`
 for you:
