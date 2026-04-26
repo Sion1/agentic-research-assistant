@@ -39,11 +39,14 @@ prompt_yn() {
 }
 
 prompt_str() {
+    # Prompts MUST go to stderr — this function is called inside $(...) so
+    # stdout is captured by the caller into a variable. Without the >&2
+    # redirect the user sees a blank screen and `read` blocks silently.
     local q="$1" def="${2:-}" reply
     if [ -n "$def" ]; then
-        printf "%b%s%b [default: %s]: " "$BOLD" "$q" "$NC" "$def"
+        printf "%b%s%b [default: %s]: " "$BOLD" "$q" "$NC" "$def" >&2
     else
-        printf "%b%s%b: " "$BOLD" "$q" "$NC"
+        printf "%b%s%b: " "$BOLD" "$q" "$NC" >&2
     fi
     read -r reply
     printf '%s' "${reply:-$def}"
