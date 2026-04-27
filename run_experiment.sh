@@ -15,7 +15,7 @@
 #
 # Env knobs:
 #   AUTORES_SKIP_GPUS                  ← comma-sep GPU indices to skip
-#   AUTORES_MIN_FREE_MB         8000   ← only consider GPUs with this much free
+#   AUTORES_MIN_FREE_MB         6000   ← only consider GPUs with this much free
 #                                       (sized for the CIFAR-10 ResNet-34 demo,
 #                                        which needs ~2-3 GB. Raise for larger
 #                                        models — e.g. 22000 for ViT-B-scale
