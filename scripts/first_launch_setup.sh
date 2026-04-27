@@ -155,6 +155,19 @@ if [ "$NONINT" = 1 ]; then
 
     mkdir -p "$NI_DATA_ROOT" || { echo "ERROR: cannot create $NI_DATA_ROOT" >&2; exit 4; }
 
+    # WANDB_API_KEY: env wins; if unset, fall back to ~/.netrc (where `wandb
+    # login` stashes the key). This avoids forcing users to re-paste the key
+    # in env after running `wandb login`.
+    if [ "$NI_WANDB" = 1 ] && [ -z "${WANDB_API_KEY:-}" ]; then
+        if [ -r "$HOME/.netrc" ]; then
+            _NETRC_KEY=$(awk '/api\.wandb\.ai/{f=1; next} f && /password/{print $2; exit}' "$HOME/.netrc" 2>/dev/null)
+            if [ -n "$_NETRC_KEY" ]; then
+                echo "[setup] WANDB_API_KEY found in ~/.netrc (from previous 'wandb login')"
+                export WANDB_API_KEY="$_NETRC_KEY"
+            fi
+        fi
+    fi
+
     {
         echo "export PYTHON=$NI_PYTHON"
         echo "export AUTORES_DATA_ROOT=$NI_DATA_ROOT"
@@ -165,7 +178,8 @@ if [ "$NONINT" = 1 ]; then
                 exit 5
             fi
             if [ -z "${WANDB_API_KEY:-}" ]; then
-                echo "ERROR: --wandb requested but WANDB_API_KEY env not set" >&2
+                echo "ERROR: --wandb requested but no WANDB_API_KEY (env or ~/.netrc)." >&2
+                echo "       Run 'wandb login' first, OR export WANDB_API_KEY=..." >&2
                 exit 6
             fi
             echo "export WANDB_PROJECT=$NI_WANDB_PROJECT"
@@ -180,7 +194,24 @@ if [ "$NONINT" = 1 ]; then
         git config user.name  >/dev/null 2>&1 || git config user.name  "autoresearch"
         git config user.email >/dev/null 2>&1 || git config user.email "autoresearch@localhost"
         if [ "$NI_PUSH" = 1 ] && [ -n "$NI_REMOTE_URL" ]; then
-            git remote get-url origin >/dev/null 2>&1 || git remote add origin "$NI_REMOTE_URL"
+            # Existing 'origin' from a `git clone` of this framework would
+            # silently mismatch the user's --remote-url (the Sion1/cifar-test
+            # bug from 2026-04-27). If origin already exists and points
+            # somewhere else, REPLACE it via set-url and tell the user.
+            _CUR_ORIGIN=$(git remote get-url origin 2>/dev/null || true)
+            if [ -z "$_CUR_ORIGIN" ]; then
+                git remote add origin "$NI_REMOTE_URL"
+                echo "[setup] git remote 'origin' = $NI_REMOTE_URL"
+            elif [ "$_CUR_ORIGIN" != "$NI_REMOTE_URL" ]; then
+                # Preserve the upstream as 'upstream' if not yet set, so the
+                # user can still pull framework updates.
+                if ! git remote get-url upstream >/dev/null 2>&1; then
+                    git remote add upstream "$_CUR_ORIGIN"
+                    echo "[setup] preserved old origin as 'upstream' = $_CUR_ORIGIN"
+                fi
+                git remote set-url origin "$NI_REMOTE_URL"
+                echo "[setup] git remote 'origin' = $NI_REMOTE_URL (was $_CUR_ORIGIN)"
+            fi
         fi
     fi
 

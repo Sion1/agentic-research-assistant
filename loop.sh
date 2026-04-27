@@ -354,13 +354,31 @@ EOF
     # incident produced ZERO transcript in driver.log because the | tee broke;
     # writing to a dedicated file via redirect is more robust on CIFS).
     ITER_TRANSCRIPT="logs/_analyze_${ITER_PAD}.transcript.log"
+
+    # Heartbeat: log "still running" every 60 s while analyze is in flight, so a
+    # user tailing driver.log can tell the difference between "stuck" and "thinking".
+    # Without this, driver.log is silent for 5-10 min while claude works.
     timeout --signal=TERM 1800 claude -p "$(cat "$PROMPT_FILE")" \
         --model "${AUTORES_CLAUDE_MODEL:-claude-opus-4-7}" \
         --allowedTools "Bash,Read,Edit,Write,Glob,Grep" \
         --permission-mode acceptEdits \
         --max-turns 150 \
-        > >(tee -a "$LOG" "$ITER_TRANSCRIPT") 2>&1
+        > >(tee -a "$LOG" "$ITER_TRANSCRIPT") 2>&1 &
+    _ANALYZE_PID=$!
+    _HEARTBEAT_T0=$(date +%s)
+    (
+        while kill -0 "$_ANALYZE_PID" 2>/dev/null; do
+            sleep 60
+            kill -0 "$_ANALYZE_PID" 2>/dev/null || break
+            _ELAPSED=$(( $(date +%s) - _HEARTBEAT_T0 ))
+            log "  ↻ analyze iter $ITER_PAD still running (elapsed: ${_ELAPSED}s, timeout: 1800s)"
+        done
+    ) 9>&- &
+    _HEARTBEAT_PID=$!
+    disown $_HEARTBEAT_PID 2>/dev/null || true
+    wait "$_ANALYZE_PID"
     _RC=$?
+    kill "$_HEARTBEAT_PID" 2>/dev/null || true
     rm -f "$PROMPT_FILE"
     if [ "$_RC" -eq 124 ]; then
         log "Analysis timeout (iter $ITER_PAD) — claude -p killed after 30 min (transcript: $ITER_TRANSCRIPT)"
@@ -433,7 +451,13 @@ PYEOF
     # fresh analyzed row + figs/. Background spawn so we don't delay the
     # exit; the next tick proceeds normally.
     _regen_dashboard_bg "post-analyze iter ${ITER_PAD}"
-    exit 0
+    # Signal the outer wrapper that the next tick should fire IMMEDIATELY
+    # (skip the usual `sleep 300`). Without this, an analyze tick that took
+    # 5-10 min still triggers a fresh 5-min sleep before propose, so users
+    # wait 10-15 min between launches when the system could have proposed
+    # right away. The wrapper checks this exit code and skips its sleep.
+    log "analyze done — requesting fast next tick (exit 7)"
+    exit 7
 fi
 
 # -------------------------------------------------
