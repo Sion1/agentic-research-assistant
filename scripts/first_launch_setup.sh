@@ -195,7 +195,18 @@ if [ "$NONINT" = 1 ]; then
         echo "git_enabled=$NI_GIT"
         echo "git_autopush_enabled=$NI_PUSH"
     } > state/.onboarding_done
-    echo "[setup] state/.env + state/.onboarding_done written. Done."
+
+    # Initialize state/iterations.tsv if missing — loop.sh's Step 0 sanity
+    # check refuses to tick without it, and the onboarding gate (Step 0.5)
+    # would never be reached. Without this header, fresh users see a
+    # confusing "ERROR: state/iterations.tsv missing" instead of the
+    # gate's instruction message. Header matches what run_experiment.sh
+    # expects on first launch.
+    if [ ! -f state/iterations.tsv ]; then
+        printf 'iter\tstatus\texp_name\tconfig\tgpu\tpid\tstarted_at\tfinished_at\tbest_metric\tverdict\n' > state/iterations.tsv
+    fi
+
+    echo "[setup] state/.env + state/.onboarding_done + state/iterations.tsv written. Done."
     exit 0
 fi
 
@@ -346,13 +357,18 @@ fi
     echo "git_autopush_enabled=$PUSH_OK"
 } > state/.onboarding_done
 
+# Initialize iterations.tsv header (see non-interactive branch above for why).
+if [ ! -f state/iterations.tsv ]; then
+    printf 'iter\tstatus\texp_name\tconfig\tgpu\tpid\tstarted_at\tfinished_at\tbest_metric\tverdict\n' > state/iterations.tsv
+fi
+
 echo
 printf "%bSetup complete.%b Choices written to state/.env, sentinel at state/.onboarding_done.\n" "$GREEN" "$NC"
 echo
 echo "Quick smoketest (1 epoch on the GPU you just configured):"
 echo "  source state/.env"
-echo "  bash run_experiment.sh configs/cifar10_resnet34.yaml --smoketest"
+echo "  EPOCHS_OVERRIDE=1 bash run_experiment.sh configs/cifar10_resnet34.yaml 0"
 echo
-echo "Full run (60 epochs):"
-echo "  bash run_experiment.sh configs/cifar10_resnet34.yaml"
+echo "Full 60-epoch baseline (after smoketest passes, use a fresh iter num):"
+echo "  bash run_experiment.sh configs/cifar10_resnet34.yaml 1"
 echo

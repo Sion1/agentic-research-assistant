@@ -51,8 +51,11 @@ def main():
 
     # ---- data ----
     data_cfg = cfg.get("data", {})
+    # AUTORES_DATA_ROOT (set by first_launch_setup.sh) overrides cfg.data.root.
+    # This lets users move datasets to a shared cache without editing every YAML.
+    data_root = os.environ.get("AUTORES_DATA_ROOT") or data_cfg.get("root", "./data/cifar10")
     train_loader, test_loader = build_cifar10(
-        root=data_cfg.get("root", "/data/cifar10"),
+        root=data_root,
         augmentation=data_cfg.get("augmentation", "standard"),
         batch_size=int(data_cfg.get("batch_size", 128)),
         num_workers=int(data_cfg.get("num_workers", 4)),

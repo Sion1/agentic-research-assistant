@@ -59,6 +59,14 @@ fi
 
 IFS=',' read -ra EVAL_AGENTS <<< "${AUTORES_CONSENSUS_EVAL_AGENTS:-claude,codex,gemini}"
 TIMEOUT_SEC="${AUTORES_CONSENSUS_TIMEOUT:-900}"
+
+# Per-agent model overrides — let users pin to whatever's available on their
+# account/tier without editing this file. Defaults to the latest stable
+# flagships at time of writing; CLI flags accept any model the agent supports.
+AUTORES_CLAUDE_MODEL="${AUTORES_CLAUDE_MODEL:-claude-opus-4-7}"
+AUTORES_CODEX_MODEL="${AUTORES_CODEX_MODEL:-gpt-5.5}"
+AUTORES_GEMINI_MODEL="${AUTORES_GEMINI_MODEL:-gemini-2.5-pro}"
+
 log "starting 5-cycle consensus (eval agents: ${EVAL_AGENTS[*]}, per-agent timeout ${TIMEOUT_SEC}s)"
 
 # ---------------------------------------------------------------------------
@@ -70,29 +78,22 @@ dispatch_agent() {
     case "$agent" in
         claude)
             timeout --signal=TERM --kill-after=30 "$TIMEOUT_SEC" claude -p "$(cat "$prompt_file")" \
-                --model claude-opus-4-7 \
+                --model "$AUTORES_CLAUDE_MODEL" \
                 --allowedTools "Bash,Read,Glob,Grep,Write" \
                 --permission-mode acceptEdits \
                 --max-turns 40 \
                 >> "$LOG" 2>&1
             ;;
         codex)
-            # gpt-5.5 is the latest model on this ChatGPT-tier account
-            # (per ~/.codex/config.toml `model = "gpt-5.5"` and tui.model_availability_nux).
-            # Tested 2026-04-26: gpt-5 / gpt-5-codex / gpt-5-mini / o3 / o4-mini / gpt-4.1 all rejected,
-            # but gpt-5.5 returns PONG cleanly.
             timeout --signal=TERM --kill-after=30 "$TIMEOUT_SEC" codex exec \
-                --model gpt-5.5 \
+                --model "$AUTORES_CODEX_MODEL" \
                 --sandbox danger-full-access \
                 "$(cat "$prompt_file")" \
                 >> "$LOG" 2>&1
             ;;
         gemini)
-            # gemini-2.5-pro is the stable production flagship (3.1-preview dropped 2026-04-26 due to 429 capacity).
-            # Cold-start can take 40-50s; 2.5-pro is fallback if 3.1 is dropped.
-            # Tested 2026-04-26 with PONG.
             timeout --signal=TERM --kill-after=30 "$TIMEOUT_SEC" gemini \
-                --model gemini-2.5-pro \
+                --model "$AUTORES_GEMINI_MODEL" \
                 --skip-trust --yolo \
                 -p "$(cat "$prompt_file")" \
                 >> "$LOG" 2>&1

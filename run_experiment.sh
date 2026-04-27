@@ -38,7 +38,18 @@ cd "$(dirname "$0")"
 mkdir -p logs state runs
 
 ITER_PAD=$(printf '%03d' "$ITER_NUM")
-EXP_NAME=$(grep -E '^exp_name:' "$CONFIG" | head -1 | awk -F'"' '{print $2}')
+# Parse exp_name with a real YAML parser. The earlier `awk -F'"'` approach
+# only worked for quoted values like `exp_name: "foo"`; unquoted YAML
+# (the more common form) returned empty, silently falling back to the
+# config filename — leaving state/iterations.tsv listing one name while
+# train.py wrote runs/<other-name>/, breaking analyze + dashboard lookup.
+PYTHON_EARLY="${PYTHON:-python3}"
+EXP_NAME=$("$PYTHON_EARLY" - "$CONFIG" <<'PY' 2>/dev/null
+import sys, pathlib, yaml
+cfg = yaml.safe_load(open(sys.argv[1], encoding="utf-8")) or {}
+print(cfg.get("exp_name") or pathlib.Path(sys.argv[1]).stem)
+PY
+)
 EXP_NAME="${EXP_NAME:-$(basename "${CONFIG%.*}")}"
 LOG="logs/exp_${ITER_PAD}_${EXP_NAME}.log"
 TSV=state/iterations.tsv

@@ -6,14 +6,17 @@
 #   1. Switch to (or create) branch "autoresearch/iter-NNN"
 #   2. Stage all changes (config + report + viz + CLAUDE.md edits + state.tsv row)
 #   3. Build a structured commit message using metrics from final.pth + iteration_NNN.md
-#   4. Commit (no merge; AUTO-PUSH by default since AUTORES_GIT_AUTOPUSH defaults to 1 — set to 0 to keep branch local)
+#   4. Commit (no merge; LOCAL-ONLY by default — set AUTORES_GIT_AUTOPUSH=1
+#      to push the branch to origin, normally done via first_launch_setup.sh)
 #   5. Switch back to main without merging
 #
 # Usage:
 #   bash scripts/git_iter_commit.sh <ITER_NUM>
 #
 # Env:
-#   AUTORES_GIT_AUTOPUSH=1 — also push the branch to origin (default: 1 / push enabled)
+#   AUTORES_GIT_AUTOPUSH=0 — push to origin if 1 (default: 0 / local-only).
+#                            first_launch_setup.sh writes 1 into state/.env if
+#                            you answer Y to the GitHub-push prompt.
 #   AUTORES_GIT_REMOTE=origin — remote name to push to (default: origin)
 #
 # Exit codes:
@@ -230,7 +233,7 @@ log "committed iter${ITER_PAD} as ${COMMIT_SHA} on branch ${BRANCH}"
 
 # Auto-push + auto-PR creation (default ON — user reviews PRs in GitHub UI).
 # To disable, export AUTORES_GIT_AUTOPUSH=0 before launching the loop.
-if [ "${AUTORES_GIT_AUTOPUSH:-1}" = "1" ]; then
+if [ "${AUTORES_GIT_AUTOPUSH:-0}" = "1" ]; then
     REMOTE="${AUTORES_GIT_REMOTE:-origin}"
     if git remote get-url "$REMOTE" >/dev/null 2>&1; then
         log "pushing ${BRANCH} to ${REMOTE}"

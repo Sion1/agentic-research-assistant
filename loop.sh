@@ -256,10 +256,12 @@ for r in rows:
         # Can't read the log (CIFS orphan-inode bug — happens when
         # working-tree files get severed by stash/checkout while train.py
         # holds an open fd). Fallback: if the run's final.pth exists in
-        # runs_autoresearch/, training has finished — mark completed
+        # runs/, training has finished — mark completed
         # without a finish_ts (analysis will read final.pth directly).
         # If neither pid nor final.pth → still running, will retry next tick.
-        ckpt_glob = glob.glob(f'runs_autoresearch/{exp_name}/*/final.pth')
+        # Note: `runs/<exp>/final.pth` (no subdir) is the demo's layout;
+        # `runs/<exp>/*/final.pth` covers projects that nest by run-id.
+        ckpt_glob = glob.glob(f'runs/{exp_name}/final.pth') + glob.glob(f'runs/{exp_name}/*/final.pth')
         if ckpt_glob:
             r[1] = 'completed'
             if r[7] == '':
@@ -320,7 +322,7 @@ YOUR TASK: Analyze this single experiment per program.md §4 (mandatory visualiz
 
 CRITICAL ORDERING (write skeleton FIRST so timeout doesn't lose all work):
 1. Read state/user_summaries.md and state/user_summary.md FIRST if they exist, then program.md, CLAUDE.md, last 3 logs/iteration_*.md, state/iterations.tsv. Treat user summaries as the user's highest-priority steering notes unless they conflict with HARD CONSTRAINTS.
-2. Parse metrics from runs_autoresearch/<exp_name>/<subdir>/final.pth (torch load, ckpt['metrics']).
+2. Parse metrics from runs/<exp_name>/final.pth (or runs/<exp_name>/<subdir>/final.pth if your project nests by run-id) — torch load, ckpt['metrics'].
 3. **WRITE logs/iteration_$ITER_PAD.md NOW** with §1-§4 + §6 verdict + §7 + §8 filled
    (use metrics from step 2; per_class.csv content can be sketched from prior knowledge or
    marked "TBD pending viz"). This is the SKELETON — must exist on disk after step 3.
@@ -348,7 +350,7 @@ EOF
     # writing to a dedicated file via redirect is more robust on CIFS).
     ITER_TRANSCRIPT="logs/_analyze_${ITER_PAD}.transcript.log"
     timeout --signal=TERM 1800 claude -p "$(cat "$PROMPT_FILE")" \
-        --model claude-opus-4-7 \
+        --model "${AUTORES_CLAUDE_MODEL:-claude-opus-4-7}" \
         --allowedTools "Bash,Read,Edit,Write,Glob,Grep" \
         --permission-mode acceptEdits \
         --max-turns 150 \
@@ -630,7 +632,7 @@ EOF
 # would otherwise block the entire while-true loop (seen on 2026-04-24 where
 # one claude -p lingered 17+ min after iter008 was already launched).
 timeout --signal=TERM 900 claude -p "$(cat "$PROMPT_FILE")" \
-    --model claude-opus-4-7 \
+    --model "${AUTORES_CLAUDE_MODEL:-claude-opus-4-7}" \
     --allowedTools "Bash,Read,Edit,Write,Glob,Grep" \
     --permission-mode acceptEdits \
     --max-turns 60 \

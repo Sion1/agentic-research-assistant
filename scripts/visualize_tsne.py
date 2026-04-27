@@ -12,7 +12,7 @@ Usage:
       --num-samples 1000
 """
 from __future__ import annotations
-import argparse, pathlib, sys
+import argparse, os, pathlib, sys
 import numpy as np, torch
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 from src.cifar_demo.data import build_cifar10, CLASSES
@@ -42,7 +42,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--ckpt", required=True)
     ap.add_argument("--out", default="figs/tsne.png")
-    ap.add_argument("--data-root", default="/data/cifar10")
+    ap.add_argument("--data-root", default=os.environ.get("AUTORES_DATA_ROOT", "./data/cifar10"))
     ap.add_argument("--num-samples", type=int, default=1500)
     ap.add_argument("--perplexity", type=float, default=30.0)
     ap.add_argument("--seed", type=int, default=42)

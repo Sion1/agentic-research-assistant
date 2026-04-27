@@ -56,8 +56,11 @@ the same loop will drive *your* research.
 **Required (steps 2–4 — single-experiment + visualization)**:
 
 ```bash
-pip install torch torchvision pyyaml scikit-learn matplotlib
+pip install -r requirements.txt
 ```
+
+(or, if you prefer to pick versions yourself: `pip install torch torchvision
+pyyaml numpy scikit-learn matplotlib wandb`)
 
 **Required for step 5 (the autonomous loop)**:
 

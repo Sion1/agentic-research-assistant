@@ -12,7 +12,7 @@ Usage:
       --num 8
 """
 from __future__ import annotations
-import argparse, pathlib, sys
+import argparse, os, pathlib, sys
 import numpy as np, torch
 import torch.nn.functional as F
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
@@ -55,7 +55,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--ckpt", required=True)
     ap.add_argument("--out", default="figs/cam.png")
-    ap.add_argument("--data-root", default="/data/cifar10")
+    ap.add_argument("--data-root", default=os.environ.get("AUTORES_DATA_ROOT", "./data/cifar10"))
     ap.add_argument("--num", type=int, default=8, help="number of sample images")
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
