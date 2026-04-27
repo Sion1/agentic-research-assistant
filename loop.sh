@@ -468,18 +468,36 @@ fi
 # exit at this gate every tick before reaching Step 2 analysis).
 # -------------------------------------------------
 # Configurable STOP thresholds (override per project via env vars):
-#   AUTORES_MAX_ITERATIONS         iteration budget (default 80)
+#   AUTORES_MAX_ITERATIONS         iteration budget (default 20 — sized for the
+#                                  CIFAR-10 demo to fit in a half-day; raise to
+#                                  50-100 for a serious research project)
 #   AUTORES_RECENT_FAIL_WINDOW     window length (default 5)
 #   AUTORES_RECENT_FAIL_LIMIT      consecutive failures within window (default 3)
 #   AUTORES_TARGET_METRIC          target value of state.tsv column 9
 #                                  (default empty = disabled)
 #   AUTORES_TARGET_DIRECTION       "max" (higher is better) | "min" (lower is better)
 #                                  (default "max")
-MAX_ITER="${AUTORES_MAX_ITERATIONS:-80}"
+#
+# Graceful manual stop: `touch state/.stop` — the next tick reads it,
+# logs the stop reason, removes the sentinel, and exits. Already-running
+# trainings are left to finish on their own; the loop just doesn't propose
+# anything new. This is the recommended way to halt mid-run.
+MAX_ITER="${AUTORES_MAX_ITERATIONS:-20}"
 WIN="${AUTORES_RECENT_FAIL_WINDOW:-5}"
 FAIL_LIMIT="${AUTORES_RECENT_FAIL_LIMIT:-3}"
 TARGET="${AUTORES_TARGET_METRIC:-}"
 DIRECTION="${AUTORES_TARGET_DIRECTION:-max}"
+
+# Manual stop sentinel — discovered in the reproduction transcript: users
+# need a way to halt the loop without lowering MAX_ITER below LAUNCHED
+# (which works but is roundabout). `touch state/.stop` is more direct.
+if [ -f state/.stop ]; then
+    log "STOP: state/.stop sentinel found — graceful manual halt requested."
+    log "      already-running trainings will finish; no new ones will be proposed."
+    rm -f state/.stop
+    _regen_dashboard_bg "stop · manual sentinel"
+    exit 0
+fi
 
 LAUNCHED=$(awk -F'\t' 'NR>1 && $1 ~ /^[0-9]+$/ {c++} END{print c+0}' state/iterations.tsv)
 FAILED_RECENT=$(awk -F'\t' 'NR>1 && $1 ~ /^[0-9]+$/' state/iterations.tsv \
@@ -493,7 +511,7 @@ else
 fi
 
 if [ "$LAUNCHED" -ge "$MAX_ITER" ]; then
-    log "STOP: $MAX_ITER iterations launched."
+    log "STOP: iteration budget reached ($LAUNCHED/$MAX_ITER). Raise AUTORES_MAX_ITERATIONS to continue."
     _regen_dashboard_bg "stop · launched cap"
     exit 0
 fi
@@ -515,7 +533,7 @@ fi
 # -------------------------------------------------
 # Step 4: concurrent-training cap (allow parallel across GPUs AND on same GPU)
 # -------------------------------------------------
-MAX_CONCURRENT="${MAX_CONCURRENT:-5}"   # override by exporting MAX_CONCURRENT
+MAX_CONCURRENT="${MAX_CONCURRENT:-4}"   # default = typical 4-GPU server; override via env
 RUNNING=$(awk -F'\t' 'NR>1 && $2 == "running" {c++} END{print c+0}' state/iterations.tsv)
 if [ "$RUNNING" -ge "$MAX_CONCURRENT" ]; then
     log "Already $RUNNING training(s) running (cap=$MAX_CONCURRENT). Waiting for next tick."

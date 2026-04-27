@@ -107,7 +107,28 @@ def panel_sentinel_lock() -> str:
 
 
 def panel_ledger(rows: list[dict]) -> str:
-    out = [c(BLD, f"state/iterations.tsv  ·  {len(rows)} iters total")]
+    # Iter budget progress, surfaced so users don't have to grep loop.sh to
+    # learn what AUTORES_MAX_ITERATIONS is set to. Default fallback matches
+    # loop.sh's default (20). state/.env may override; we read it best-effort.
+    max_iter_default = 20
+    max_iter = max_iter_default
+    env_path = pathlib.Path("state/.env")
+    if env_path.exists():
+        for line in env_path.read_text(errors="replace").splitlines():
+            m = re.match(r"\s*export\s+AUTORES_MAX_ITERATIONS=(\S+)", line)
+            if m:
+                try:
+                    max_iter = int(m.group(1).strip().strip('"').strip("'"))
+                except ValueError:
+                    pass
+    launched = sum(1 for r in rows if str(r.get("iter", "")).isdigit())
+    budget_str = f"{launched}/{max_iter}"
+    if launched >= max_iter:
+        budget_str = c("31", budget_str + " · STOP fired")
+    elif launched >= max_iter * 0.8:
+        budget_str = c("33", budget_str + " · 80% used")
+
+    out = [c(BLD, f"state/iterations.tsv  ·  {len(rows)} iters total  ·  budget {budget_str}")]
     if not rows:
         out.append("  " + c(GRY, "(empty — no experiments launched yet)"))
         return "\n".join(out)

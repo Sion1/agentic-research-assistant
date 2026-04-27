@@ -295,6 +295,44 @@ If you set up wandb in step 1, you can also watch live curves at
 [wandb.ai](https://wandb.ai) under your project — each iter becomes its
 own run with the iter's `exp_name`.
 
+### 9. Stopping the loop
+
+The loop has four built-in stop conditions, in priority order:
+
+| # | Trigger | Default | How to use |
+|---|---|---|---|
+| 1 | `state/.stop` sentinel exists | n/a | `touch state/.stop` — graceful, recommended |
+| 2 | `LAUNCHED ≥ AUTORES_MAX_ITERATIONS` | 20 | `export AUTORES_MAX_ITERATIONS=N` (any value) |
+| 3 | 3-of-5 last iters `Failure` verdict | always on | self-protective — auto-stops a misbehaving run |
+| 4 | best metric ≥ `AUTORES_TARGET_METRIC` | disabled | `export AUTORES_TARGET_METRIC=0.95` |
+
+**Manual stop, recommended (graceful)**:
+
+```bash
+touch /path/to/agent-test/state/.stop
+# next tick (≤ 60 s) logs the stop reason, removes the sentinel, exits.
+# Already-running trainings finish on their own; nothing new is proposed.
+```
+
+**Hard stop (kills the supervisor)**:
+
+```bash
+tmux kill-session -t autores
+# stops loop.sh immediately. In-flight trainings keep running until they
+# finish their current epoch (they're detached); kill those by PID if needed.
+```
+
+**Pause (no-op ticks until you re-enable)**:
+
+```bash
+rm /path/to/agent-test/state/.loop.enabled.$(hostname)   # pause
+touch /path/to/agent-test/state/.loop.enabled.$(hostname) # resume
+# loop ticks fire but exit at the sentinel guard until you touch it back.
+```
+
+`watch_loop.py` shows current budget (`launched/MAX_ITERATIONS`) at the top
+of its ledger panel, so you know where you are without reading source.
+
 ---
 
 ## GitHub integration (optional, recommended)
