@@ -506,16 +506,20 @@ def build_tree(rows: list[IterRow]) -> dict[str, Any]:
         groups.setdefault(key, {"id": key, "name": label, "detail": detail, "rows": []})
         groups[key]["rows"].append(r)
 
+    # Group order = visual layout order top-to-bottom. Adapt for your project.
     order = ["baseline", "aug", "opt", "sched", "reg", "budget", "sanity", "other"]
     group_items = [groups[k] for k in order if k in groups]
-    group_count = len(group_items)
-    x_group = 390
-    span = 560
-    start_y = 360 - span / 2
+    x_group = 430
+    row_gap = 76
+    group_gap = 112
+    top_pad = 86
 
     nodes = []
+    cursor_y = top_pad
     for gi, group in enumerate(group_items):
-        y = int(start_y + gi * (span / max(group_count - 1, 1)))
+        child_count = max(len(group["rows"]), 1)
+        child_span = max(0, (child_count - 1) * row_gap)
+        y = int(cursor_y + child_span / 2)
         row_statuses = [display_status(r) for r in group["rows"]]
         if "running" in row_statuses:
             status = "running"
@@ -531,6 +535,17 @@ def build_tree(rows: list[IterRow]) -> dict[str, Any]:
             build_iter_node(r, x_group, y, idx, len(group["rows"]))
             for idx, r in enumerate(sorted(group["rows"], key=lambda rr: rr.iter_id))
         ]
+        # Inject branch metadata into each iter's meta so the dashboard's
+        # branch-badge UI ('cell A — pure DINO' style chip in the detail
+        # panel) can render. Without this, the badge stays empty.
+        child_dicts = []
+        for child in children:
+            d = child.__dict__
+            d.setdefault("meta", {})
+            d["meta"]["branch_id"] = group["id"]
+            d["meta"]["branch_name"] = group["name"]
+            d["meta"]["branch_detail"] = group["detail"]
+            child_dicts.append(d)
         metric_vals = []
         for child in children:
             try:
@@ -549,9 +564,10 @@ def build_tree(rows: list[IterRow]) -> dict[str, Any]:
                 "y": y,
                 "metric": metric,
                 "notes": f"{len(children)} experiments",
-                "subs": [child.__dict__ for child in children],
+                "subs": child_dicts,
             }
         )
+        cursor_y += child_span + group_gap
 
     all_metrics = []
     for group in nodes:
@@ -564,18 +580,31 @@ def build_tree(rows: list[IterRow]) -> dict[str, Any]:
     task_metric = f"current best {best[1]} · acc={best[0]:.2f}" if best else ""
     generated = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     node_summaries = read_node_summaries(USER_SUMMARIES)
+    # Compute SVG canvas dimensions from the node spread so the HTML's
+    # pan/zoom 'fit-to-window' logic has a real viewBox to work against.
+    all_y = [n["y"] for n in nodes]
+    for group in nodes:
+        all_y.extend(child["y"] for child in group["subs"])
+    if all_y:
+        min_y, max_y = min(all_y), max(all_y)
+        task_y = int((min_y + max_y) / 2)
+        canvas_height = max(720, max_y + 96)
+    else:
+        task_y = 360
+        canvas_height = 720
     return {
         "task": {
             "id": "task",
             "name": "AutoResearch",
             "detail": "实验探索树 · 自动从 state / logs / figs 生成",
             "status": "info",
-            "x": 80,
-            "y": 360,
+            "x": 90,
+            "y": task_y,
             "metric": task_metric,
             "notes": f"Generated at {generated}. Click any node to inspect metrics, rationale, reports and artifacts.",
         },
         "nodes": nodes,
+        "layout": {"width": 1040, "height": canvas_height},
         "user_summary": USER_SUMMARY.read_text(encoding="utf-8", errors="replace") if USER_SUMMARY.exists() else "",
         "user_summaries": node_summaries,
     }
@@ -635,11 +664,12 @@ body{font-family:var(--font-sans);background:var(--bg-page);color:var(--text-pri
 .search{height:42px;width:100%;border:0.5px solid var(--border);border-radius:11px;background:var(--bg-card);color:var(--text-primary);font-family:inherit;font-size:13px;padding:0 14px;box-shadow:var(--shadow-sm)}
 .search:focus{outline:none;border-color:var(--border-strong)}
 .lang-select{font-size:12.5px;padding:6px 10px;border-radius:8px;border:0.5px solid var(--border-strong);background:var(--bg-card);color:var(--text-primary);font-family:inherit}
-.shell{padding:16px 28px 24px;display:flex;flex-direction:column;min-height:0;flex:1}
-.toolbar{display:grid;grid-template-columns:repeat(5,minmax(120px,1fr));gap:12px;margin:0 0 14px}
-.chip{font-size:12px;padding:14px 16px;border-radius:11px;background:var(--bg-card);color:var(--text-secondary);border:0.5px solid var(--border);box-shadow:var(--shadow-sm);display:flex;align-items:center;justify-content:space-between;min-height:72px}
-.chip strong{display:block;font-size:24px;color:var(--text-primary);line-height:1}
-.toolbar-actions{display:flex;gap:8px;align-items:center;margin:-4px 0 14px;justify-content:flex-end;flex-wrap:wrap}
+.shell{padding:12px 20px 20px;display:flex;flex-direction:column;min-height:0;flex:1}
+.summary-strip{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:stretch;margin:0 0 10px}
+.toolbar{display:grid;grid-template-columns:repeat(5,minmax(96px,1fr));gap:10px;margin:0}
+.chip{font-size:11.5px;padding:9px 12px;border-radius:9px;background:var(--bg-card);color:var(--text-secondary);border:0.5px solid var(--border);box-shadow:var(--shadow-sm);display:flex;align-items:center;justify-content:space-between;min-height:50px}
+.chip strong{display:block;font-size:20px;color:var(--text-primary);line-height:1}
+.toolbar-actions{display:flex;gap:7px;align-items:center;margin:0;justify-content:flex-end;flex-wrap:wrap;background:var(--bg-card);border:0.5px solid var(--border);border-radius:9px;box-shadow:var(--shadow-sm);padding:6px;min-width:330px;max-width:520px}
 .toolbar-actions .chip{min-height:auto;padding:5px 10px;border-radius:999px;display:inline-flex;gap:6px}
 .workspace{display:grid;grid-template-columns:1fr;gap:18px;min-height:0;flex:1}
 .page.detail-open .workspace{grid-template-columns:minmax(760px,1fr) minmax(420px,34vw)}
@@ -652,8 +682,9 @@ body{font-family:var(--font-sans);background:var(--bg-page);color:var(--text-pri
 .zoom-group{display:inline-flex;border:0.5px solid var(--border);border-radius:8px;overflow:hidden;box-shadow:var(--shadow-sm);background:var(--bg-card)}
 .zoom-group .control-btn{border:0;border-radius:0;box-shadow:none}
 .zoom-label{min-width:54px;text-align:center;font-size:12px;padding:6px 10px;border-left:0.5px solid var(--border);border-right:0.5px solid var(--border)}
-.tree-body{position:relative;min-height:0;flex:1;overflow:auto;padding:22px}
-svg.tree{display:block;width:100%;height:100%;min-width:900px;min-height:720px;user-select:none;transform-origin:0 0}
+.tree-body{position:relative;min-height:0;flex:1;overflow:hidden;padding:0;cursor:grab;touch-action:none}
+.tree-body.panning{cursor:grabbing}
+svg.tree{display:block;width:100%;height:100%;min-height:640px;user-select:none;background:var(--bg-card)}
 .legend{position:absolute;left:18px;bottom:18px;background:rgba(255,255,255,.78);border:0.5px solid var(--border);border-radius:10px;box-shadow:var(--shadow-sm);padding:10px 12px;font-size:11.5px;color:var(--text-secondary);backdrop-filter:blur(12px)}
 .legend-title{font-weight:600;color:var(--text-primary);margin-bottom:5px}
 .legend-row{display:flex;align-items:center;gap:7px;line-height:1.75}
@@ -664,7 +695,7 @@ svg.tree{display:block;width:100%;height:100%;min-width:900px;min-height:720px;u
 .page.detail-open .detail-panel{display:block}
 .empty-detail{height:100%;display:flex;align-items:center;justify-content:center;text-align:center;color:var(--text-tertiary);font-size:13px}
 @media (max-width:1100px){
-  body{overflow:auto}.page{height:auto;min-height:100vh}.hero{grid-template-columns:1fr}.shell{padding:16px}.toolbar{grid-template-columns:repeat(2,minmax(120px,1fr))}.workspace{grid-template-columns:1fr}.detail-panel{min-height:520px}
+  body{overflow:auto}.page{height:auto;min-height:100vh}.hero{grid-template-columns:1fr}.shell{padding:16px}.summary-strip{grid-template-columns:1fr}.toolbar{grid-template-columns:repeat(2,minmax(120px,1fr))}.toolbar-actions{min-width:0;max-width:none}.workspace{grid-template-columns:1fr}.detail-panel{min-height:520px}
   .page.detail-open .workspace{grid-template-columns:1fr}
 }
 g[data-id]{cursor:pointer;transition:opacity .15s ease}g[data-id].dim{opacity:.18}.halo{opacity:0;transition:opacity .18s ease}
@@ -678,6 +709,7 @@ g[data-id]:hover .halo,g[data-id].sel .halo,g[data-id].cmp .halo{opacity:.18}g[d
 .pop-status.success{background:#E1F5EE;color:#0F6E56}.pop-status.failed{background:#FCEBEB;color:#791F1F}
 .pop-status.warning{background:#FAEEDA;color:#854F0B}.pop-status.running{background:#E6F1FB;color:#0C447C}
 .pop-status.info{background:var(--bg-soft);color:var(--text-secondary)}
+.branch-badge{display:inline-flex;align-items:center;max-width:100%;font-size:11.5px;line-height:1.25;padding:4px 9px;border-radius:8px;background:var(--bg-soft);color:var(--text-secondary);border:0.5px solid var(--border);margin:6px 0 2px}
 @media (prefers-color-scheme: dark){
   .pop-status.success{background:#0F3D2E;color:#9FE1CB}.pop-status.failed{background:#3a1a1a;color:#F7C1C1}
   .pop-status.warning{background:#3a2a0a;color:#FAC775}.pop-status.running{background:#0C2C53;color:#B5D4F4}}
@@ -698,7 +730,8 @@ g[data-id]:hover .halo,g[data-id].sel .halo,g[data-id].cmp .halo{opacity:.18}g[d
 .visual-tabs{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 10px}
 .visual-tab{font-size:11.5px;padding:4px 9px;border-radius:8px;border:0.5px solid var(--border-strong);background:var(--bg-card);color:var(--text-primary);cursor:pointer;font-family:inherit}
 .visual-tab.active,.visual-tab:hover{background:var(--bg-soft)}
-.visual-frame{background:var(--bg-soft);border:0.5px solid var(--border);border-radius:10px;padding:8px;min-height:220px;display:flex;align-items:center;justify-content:center;overflow:auto}
+.visual-frame{background:var(--bg-soft);border:0.5px solid var(--border);border-radius:10px;padding:8px;min-height:220px;display:flex;align-items:flex-start;justify-content:flex-start;overflow:auto;cursor:grab}
+.visual-frame.panning{cursor:grabbing;user-select:none}
 .visual-frame img{max-width:100%;max-height:420px;border-radius:8px;display:block;object-fit:contain}
 .visual-caption{font-size:11.5px;color:var(--text-tertiary);margin-top:6px}
 .pop-actions{display:flex;gap:8px;margin-top:14px}
@@ -714,11 +747,17 @@ g[data-id]:hover .halo,g[data-id].sel .halo,g[data-id].cmp .halo{opacity:.18}g[d
 .compare-head{display:flex;align-items:center;justify-content:space-between;padding:16px 18px;border-bottom:0.5px solid var(--border)}
 .compare-title{font-size:17px;font-weight:500}
 .compare-content{display:flex;flex-direction:column;min-height:0;flex:1}
+.compare-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 18px 10px;flex-wrap:wrap}
+.compare-zoom{display:flex;align-items:center;gap:7px;color:var(--text-secondary);font-size:12px}
+.compare-zoom input{width:150px;accent-color:var(--text-primary)}
+.compare-zoom .control-btn{height:28px;padding:0 9px}
 .compare-body{display:flex;gap:0;padding:0 18px 18px;min-height:0;flex:1;overflow:hidden}
 .compare-card{border:0.5px solid var(--border);border-radius:12px;padding:14px;min-width:180px;background:var(--bg-card);overflow:auto}
 .compare-card h3{font-size:15px;font-weight:500;margin:0 0 4px}
-.compare-card .visual-frame{height:52vh;min-height:320px}
-.compare-card .visual-frame img{max-height:none;width:100%;height:100%;object-fit:contain}
+.compare-card .compare-zoom{margin:10px 0 8px;justify-content:flex-end}
+.compare-card .compare-zoom input{width:120px}
+.compare-card .visual-frame{height:52vh;min-height:320px;align-items:flex-start;justify-content:flex-start}
+.compare-card .visual-frame img{max-height:none;object-fit:contain}
 .compare-resizer{cursor:col-resize;display:flex;align-items:center;justify-content:center;flex:0 0 16px;touch-action:none}
 .compare-resizer::before{content:"";width:3px;height:100%;border-radius:999px;background:var(--border-strong)}
 .compare-resizer:hover::before{background:var(--text-tertiary)}
@@ -773,8 +812,10 @@ g[data-id]:hover .halo,g[data-id].sel .halo,g[data-id].cmp .halo{opacity:.18}g[d
     </div>
   </header>
   <main class="shell">
-    <div class="toolbar" id="toolbar"></div>
-    <div class="toolbar-actions" id="toolbar-actions"></div>
+    <div class="summary-strip">
+      <div class="toolbar" id="toolbar"></div>
+      <div class="toolbar-actions" id="toolbar-actions"></div>
+    </div>
     <div class="workspace">
       <div class="canvas" id="canvas">
         <div class="canvas-head">
@@ -845,7 +886,7 @@ g[data-id]:hover .halo,g[data-id].sel .halo,g[data-id].cmp .halo{opacity:.18}g[d
   const STATUS_KEYS=['success','failed','warning','running','info'];
   const COLOR={success:'#1D9E75',failed:'#E24B4A',warning:'#EF9F27',running:'#378ADD',info:'#888780'};
   const data=JSON.parse(document.getElementById('tree-data').textContent);
-  let state={selected:null,visualIndex:0,compare:[],compareVisualIndex:0,compareOpen:false,compareWidth:50,compareWeights:[],search:'',filter:'all',zoom:1,drag:null};
+  let state={selected:null,visualIndex:0,detailImageZoom:1,compare:[],compareVisualIndex:0,compareOpen:false,compareWidth:50,compareWeights:[],compareImageZoomById:{},search:'',filter:'all',zoom:1,pan:{x:0,y:0},fitted:false,drag:null,panDrag:null};
   function applyLanguage(){
     document.documentElement.lang=lang==='ja'?'ja':lang==='en'?'en':'zh-CN';
     document.querySelectorAll('[data-i18n]').forEach(el=>{el.textContent=t(el.getAttribute('data-i18n'))});
@@ -876,12 +917,42 @@ g[data-id]:hover .halo,g[data-id].sel .halo,g[data-id].cmp .halo{opacity:.18}g[d
     const q=state.search.trim().toLowerCase();
     return !q || nodeSearchText(node).includes(q);
   }
+  function layoutSize(){
+    const l=data.layout||{};
+    return {w:Number(l.width||1040),h:Number(l.height||760)};
+  }
+  function treeBounds(){
+    const nodes=allNodes();
+    const xs=nodes.map(n=>Number(n.x||0)), ys=nodes.map(n=>Number(n.y||0));
+    return {minX:Math.min(...xs)-120,maxX:Math.max(...xs)+150,minY:Math.min(...ys)-84,maxY:Math.max(...ys)+92};
+  }
+  function applyTreeTransform(){
+    const viewport=document.getElementById('tree-viewport');
+    if(viewport)viewport.setAttribute('transform',`translate(${state.pan.x} ${state.pan.y}) scale(${state.zoom})`);
+    const zl=document.getElementById('zoom-label'); if(zl)zl.textContent=`${Math.round(state.zoom*100)}%`;
+  }
+  function svgPoint(clientX,clientY){
+    const svg=document.getElementById('svg');
+    const pt=svg.createSVGPoint();
+    pt.x=clientX; pt.y=clientY;
+    return pt.matrixTransform(svg.getScreenCTM().inverse());
+  }
+  function fitTree(animate){
+    const size=layoutSize(), b=treeBounds(), pad=58;
+    const bw=Math.max(1,b.maxX-b.minX), bh=Math.max(1,b.maxY-b.minY);
+    const k=Math.min(1.28,Math.max(.38,Math.min((size.w-pad*2)/bw,(size.h-pad*2)/bh)));
+    state.zoom=k;
+    state.pan={x:pad-b.minX*k,y:pad-b.minY*k};
+    if(animate){
+      document.getElementById('tree-viewport')?.style.setProperty('transition','transform .16s ease');
+      setTimeout(()=>document.getElementById('tree-viewport')?.style.removeProperty('transition'),180);
+    }
+    applyTreeTransform();
+  }
   function renderSvg(){
     const svg=document.getElementById('svg'); const t=data.task; let edges='',dots='';
-    svg.style.transform=`scale(${state.zoom})`;
-    svg.style.width=`${state.zoom*100}%`;
-    svg.style.height=`${state.zoom*100}%`;
-    const zl=document.getElementById('zoom-label'); if(zl)zl.textContent=`${Math.round(state.zoom*100)}%`;
+    const size=layoutSize();
+    svg.setAttribute('viewBox',`0 0 ${size.w} ${size.h}`);
     for(const n of data.nodes){
       edges+=`<path class="edge" d="${curve(t.x+10,t.y,n.x-10,n.y)}"/>`;
       for(const s of (n.subs||[])) edges+=`<path class="edge" d="${curve(n.x+10,n.y,s.x-10,s.y)}"/>`;
@@ -901,11 +972,16 @@ g[data-id]:hover .halo,g[data-id].sel .halo,g[data-id].cmp .halo{opacity:.18}g[d
       </g>`;
     }
     dots+=drawDot(t); for(const n of data.nodes){dots+=drawDot(n);for(const s of (n.subs||[]))dots+=drawDot(s)}
-    svg.innerHTML=edges+dots;
+    svg.innerHTML=`<g id="tree-viewport">${edges+dots}</g>`;
+    if(!state.fitted){state.fitted=true;fitTree(false)}else{applyTreeTransform()}
   }
   function metaLines(node){
     const m=node.meta||{}; const keys=['exp_name','acc','loss','top5','best_epoch','gpu','pid','started_at','finished_at'];
     return keys.filter(k=>m[k]).map(k=>`${k}: ${m[k]}`).join('\n');
+  }
+  function branchBadge(node){
+    const m=node?.meta||{};
+    return m.branch_name?`<div class="branch-badge">${escapeHtml(m.branch_name)}</div>`:'';
   }
   function renderDetailContent(){
     const node=findNode(state.selected); if(!node) return '';
@@ -914,13 +990,20 @@ g[data-id]:hover .halo,g[data-id].sel .halo,g[data-id].cmp .halo{opacity:.18}g[d
     const visuals=node.visuals||[];
     if(state.visualIndex>=visuals.length) state.visualIndex=0;
     const activeVisual=visuals[state.visualIndex];
+    const detailZoomPct=Math.round((state.detailImageZoom||1)*100);
     const visualHtml=visuals.length?`
       <div class="section-h">${t('visuals')}</div>
       <div class="visual-tabs">
         ${visuals.map((v,i)=>`<button class="visual-tab ${i===state.visualIndex?'active':''}" data-visual-index="${i}">${escapeHtml(v.label)}</button>`).join('')}
       </div>
+      <div class="compare-zoom" style="margin:0 0 8px">
+        <button class="control-btn" id="detail-img-zoom-out" aria-label="缩小图片">−</button>
+        <input id="detail-img-zoom" type="range" min="50" max="320" value="${detailZoomPct}" aria-label="缩放节点图片">
+        <button class="control-btn" id="detail-img-zoom-in" aria-label="放大图片">＋</button>
+        <span id="detail-img-zoom-label">${detailZoomPct}%</span>
+      </div>
       <div class="visual-frame">
-        <img src="${escapeHtml(activeVisual.href)}" alt="${escapeHtml(activeVisual.label)}">
+        <img id="detail-visual-img" src="${escapeHtml(activeVisual.href)}" alt="${escapeHtml(activeVisual.label)}" style="width:${detailZoomPct}%;height:auto;max-width:none;max-height:none">
       </div>
       <div class="visual-caption">${lang==='en'?'Previewed inline; use artifact links for source files.':lang==='ja'?'画像はこのパネル内でプレビューされます。元ファイルは Artifacts から開けます。':'图片在当前面板内预览；下方 Artifacts 可打开原始文件。'}</div>`:'';
     let analysisHtml='';
@@ -937,6 +1020,7 @@ g[data-id]:hover .halo,g[data-id].sel .halo,g[data-id].cmp .halo{opacity:.18}g[d
     return `<div class="detail-head"><div>
         <span class="pop-status ${status}"><i class="pulse"></i>${t(status)||status}</span>
         <h3 class="pop-name">${escapeHtml(node.name)}</h3>
+        ${branchBadge(node)}
         <p class="pop-detail">${escapeHtml(node.detail||'')}</p>
       </div><button class="icon-btn" id="b-close-detail" aria-label="关闭">×</button></div>
       ${node.metric?`<div class="pop-meta">${escapeHtml(node.metric)}</div>`:''}
@@ -975,8 +1059,19 @@ g[data-id]:hover .halo,g[data-id].sel .halo,g[data-id].cmp .halo{opacity:.18}g[d
     toast(limited?t('compareLimit'):(state.compare.length<2?t('compareAdded'):t('compareReady')));
   }
   function setZoom(next){
-    state.zoom=Math.min(1.6,Math.max(.65,next));
-    renderSvg();
+    const svg=document.getElementById('svg');
+    const r=svg.getBoundingClientRect();
+    const anchor=svgPoint(r.left+r.width/2,r.top+r.height/2);
+    zoomAt(next,anchor);
+  }
+  function zoomAt(next,anchor){
+    const old=state.zoom;
+    const k=Math.min(2.8,Math.max(.35,next));
+    const worldX=(anchor.x-state.pan.x)/old;
+    const worldY=(anchor.y-state.pan.y)/old;
+    state.zoom=k;
+    state.pan={x:anchor.x-worldX*k,y:anchor.y-worldY*k};
+    applyTreeTransform();
   }
   function commonVisuals(a,b){
     const av=a?.visuals||[], bv=b?.visuals||[];
@@ -984,6 +1079,11 @@ g[data-id]:hover .halo,g[data-id].sel .halo,g[data-id].cmp .halo{opacity:.18}g[d
     return labels.length?labels:[...(new Set([...av.map(v=>v.label),...bv.map(v=>v.label)]))];
   }
   function visualByLabel(node,label){return (node?.visuals||[]).find(v=>v.label===label)}
+  function compareLabels(nodes){
+    const labels=[];
+    nodes.forEach(n=>(n.visuals||[]).forEach(v=>{if(!labels.includes(v.label))labels.push(v.label)}));
+    return labels;
+  }
   function metricBlock(node){
     const m=node?.meta||{}; const keys=['acc','loss','top5','best_epoch'];
     return keys.filter(k=>m[k]).map(k=>`${k}: ${m[k]}`).join('\n') || (node?.metric||'');
@@ -998,13 +1098,52 @@ g[data-id]:hover .halo,g[data-id].sel .halo,g[data-id].cmp .halo{opacity:.18}g[d
   }
   function compareCard(node,label,weight){
     const v=visualByLabel(node,label);
-    return `<div class="compare-card" style="flex:${weight} 1 0">
+    const nodeId=node?.id||'node';
+    const imgZoom=Math.round((state.compareImageZoomById[nodeId]||1)*100);
+    const zoomControls=v?`<div class="compare-zoom">
+      <button class="control-btn" data-compare-node-zoom-out="${escapeHtml(nodeId)}" aria-label="缩小图片">−</button>
+      <input data-compare-node-zoom="${escapeHtml(nodeId)}" type="range" min="50" max="320" value="${imgZoom}" aria-label="缩放该节点图片">
+      <button class="control-btn" data-compare-node-zoom-in="${escapeHtml(nodeId)}" aria-label="放大图片">＋</button>
+      <span data-compare-node-zoom-label="${escapeHtml(nodeId)}">${imgZoom}%</span>
+    </div>`:'';
+    return `<div class="compare-card" data-compare-card="${escapeHtml(nodeId)}" style="flex:${weight} 1 0">
       <h3>${escapeHtml(node?.name||'未选择')}</h3>
+      ${branchBadge(node)}
       <p class="pop-detail">${escapeHtml(node?.detail||'')}</p>
       ${metricBlock(node)?`<div class="pop-meta">${escapeHtml(metricBlock(node))}</div>`:''}
-      <div class="visual-frame">${v?`<img src="${escapeHtml(v.href)}" alt="${escapeHtml(v.label)}">`:`<div class="compare-empty">该节点没有 ${escapeHtml(label)} 图</div>`}</div>
+      ${zoomControls}
+      <div class="visual-frame" ${v?`data-compare-node-frame="${escapeHtml(nodeId)}"`:''}>${v?`<img data-compare-node-img="${escapeHtml(nodeId)}" src="${escapeHtml(v.href)}" alt="${escapeHtml(v.label)}" style="width:${imgZoom}%;height:auto;max-width:none;max-height:none">`:`<div class="compare-empty">该节点没有 ${escapeHtml(label)} 图</div>`}</div>
       ${node?.notes?`<div class="pop-notes">${escapeHtml(String(node.notes).slice(0,420))}</div>`:''}
     </div>`;
+  }
+  function setCompareNodeZoom(nodeId,next,anchorFrame){
+    if(!nodeId)return;
+    const old=state.compareImageZoomById[nodeId]||1;
+    const z=Math.min(3.2,Math.max(.5,next));
+    state.compareImageZoomById[nodeId]=z;
+    const pct=Math.round(z*100);
+    let anchor=null;
+    if(anchorFrame){
+      anchor={
+        left:anchorFrame.scrollLeft,
+        top:anchorFrame.scrollTop,
+        x:(anchorFrame._wheelX||anchorFrame.clientWidth/2)+anchorFrame.scrollLeft,
+        y:(anchorFrame._wheelY||anchorFrame.clientHeight/2)+anchorFrame.scrollTop,
+      };
+    }
+    document.querySelectorAll(`[data-compare-node-img="${CSS.escape(nodeId)}"]`).forEach(img=>{
+      img.style.width=`${pct}%`;
+      img.style.height='auto';
+      img.style.maxWidth='none';
+      img.style.maxHeight='none';
+    });
+    document.querySelectorAll(`[data-compare-node-zoom="${CSS.escape(nodeId)}"]`).forEach(input=>{input.value=String(pct)});
+    document.querySelectorAll(`[data-compare-node-zoom-label="${CSS.escape(nodeId)}"]`).forEach(label=>{label.textContent=`${pct}%`});
+    if(anchorFrame&&anchor&&old>0){
+      const scale=z/old;
+      anchorFrame.scrollLeft=anchor.x*scale-(anchor.x-anchor.left);
+      anchorFrame.scrollTop=anchor.y*scale-(anchor.y-anchor.top);
+    }
   }
   function miniCard(node,index){
     const v=(node.visuals||[])[0];
@@ -1016,6 +1155,7 @@ g[data-id]:hover .halo,g[data-id].sel .halo,g[data-id].cmp .halo{opacity:.18}g[d
           <span class="pop-status ${node.status||'info'}" style="margin:0"><i class="pulse"></i>${t(node.status||'info')}</span>
           <button class="icon-btn" data-remove-compare="${escapeHtml(node.id)}" aria-label="remove">×</button>
       </div>
+      ${branchBadge(node)}
       <div class="mini-metrics">${metrics}</div>
       <div class="mini-card-main">
         <div class="mini-card-img">${v?`<img src="${escapeHtml(v.href)}" alt="${escapeHtml(v.label)}">`:'<span class="pop-detail">No visual</span>'}</div>
@@ -1101,8 +1241,7 @@ g[data-id]:hover .halo,g[data-id].sel .halo,g[data-id].cmp .halo{opacity:.18}g[d
     const content=document.getElementById('compare-content');
     if(state.compare.length<2){content.innerHTML=`<div class="compare-empty">${t('compareEmpty')}</div>`;return}
     const selected=state.compare.map(id=>findNode(id)).filter(Boolean);
-    let labels=selected.reduce((acc,n,i)=>i===0?(n.visuals||[]).map(v=>v.label):acc.filter(l=>(n.visuals||[]).some(v=>v.label===l)),[]);
-    if(!labels.length) selected.forEach(n=>(n.visuals||[]).forEach(v=>{if(!labels.includes(v.label))labels.push(v.label)}));
+    let labels=compareLabels(selected);
     if(state.compareVisualIndex>=labels.length)state.compareVisualIndex=0;
     const label=labels[state.compareVisualIndex]||'visual';
     const tabs=labels.map((l,i)=>`<button class="visual-tab ${i===state.compareVisualIndex?'active':''}" data-compare-visual-index="${i}">${escapeHtml(l)}</button>`).join('');
@@ -1112,7 +1251,7 @@ g[data-id]:hover .halo,g[data-id].sel .halo,g[data-id].cmp .halo{opacity:.18}g[d
       const handle=i<selected.length-1?`<div class="compare-resizer" data-resizer-index="${i}" title="拖拽调整相邻两栏宽度"></div>`:'';
       return card+handle;
     }).join('');
-    content.innerHTML=`<div style="padding:12px 18px 10px"><div class="visual-tabs">${tabs}</div></div>
+    content.innerHTML=`<div class="compare-toolbar"><div class="visual-tabs">${tabs||'<span class="compare-empty">没有可视化结果</span>'}</div></div>
       <div class="compare-body" id="compare-body">${cards}</div>`;
     const range=document.getElementById('compare-width-range');
     if(range){
@@ -1213,7 +1352,13 @@ g[data-id]:hover .halo,g[data-id].sel .halo,g[data-id].cmp .halo{opacity:.18}g[d
     if(e.target.id==='export-html'){window.print();return}
     if(e.target.id==='zoom-in'){setZoom(state.zoom+.1);return}
     if(e.target.id==='zoom-out'){setZoom(state.zoom-.1);return}
-    if(e.target.id==='fit-view'){state.zoom=1;renderSvg();document.getElementById('tree-body')?.scrollTo({left:0,top:0,behavior:'smooth'});return}
+    if(e.target.id==='detail-img-zoom-in'){state.detailImageZoom=Math.min(3.2,(state.detailImageZoom||1)+.15);renderDetail();return}
+    if(e.target.id==='detail-img-zoom-out'){state.detailImageZoom=Math.max(.5,(state.detailImageZoom||1)-.15);renderDetail();return}
+    const nodeZoomIn=e.target.closest('[data-compare-node-zoom-in]');
+    if(nodeZoomIn){const id=nodeZoomIn.getAttribute('data-compare-node-zoom-in');setCompareNodeZoom(id,(state.compareImageZoomById[id]||1)+.15);return}
+    const nodeZoomOut=e.target.closest('[data-compare-node-zoom-out]');
+    if(nodeZoomOut){const id=nodeZoomOut.getAttribute('data-compare-node-zoom-out');setCompareNodeZoom(id,(state.compareImageZoomById[id]||1)-.15);return}
+    if(e.target.id==='fit-view'){fitTree(true);return}
     if(e.target.id==='fullscreen-tree'){document.getElementById('canvas')?.requestFullscreen?.();return}
     if(e.target.id==='summary-open'){renderSummaryPanel();return}
     if(e.target.id==='summary-save'){saveSummary();return}
@@ -1239,16 +1384,98 @@ g[data-id]:hover .halo,g[data-id].sel .halo,g[data-id].cmp .halo{opacity:.18}g[d
       state.filter=e.target.value||'all';
       renderSvg();
     }
+    const compareNodeZoom=e.target.closest('[data-compare-node-zoom]');
+    if(compareNodeZoom){
+      const id=compareNodeZoom.getAttribute('data-compare-node-zoom');
+      setCompareNodeZoom(id,Number(compareNodeZoom.value||100)/100);
+    }
+    if(e.target.id==='detail-img-zoom'){
+      state.detailImageZoom=Math.min(3.2,Math.max(.5,Number(e.target.value||100)/100));
+      const label=document.getElementById('detail-img-zoom-label');
+      if(label)label.textContent=`${Math.round(state.detailImageZoom*100)}%`;
+      const img=document.getElementById('detail-visual-img');
+      if(img){
+        img.style.width=`${Math.round(state.detailImageZoom*100)}%`;
+        img.style.height='auto';
+        img.style.maxWidth='none';
+        img.style.maxHeight='none';
+      }
+    }
   });
   document.addEventListener('pointerdown',function(e){
+    const visualFrame=e.target.closest('.visual-frame');
+    if(visualFrame&&visualFrame.querySelector('img')){
+      state.imagePan={
+        frame:visualFrame,
+        x:e.clientX,
+        y:e.clientY,
+        left:visualFrame.scrollLeft,
+        top:visualFrame.scrollTop,
+      };
+      visualFrame.classList.add('panning');
+      try{visualFrame.setPointerCapture(e.pointerId)}catch(_){}
+      e.preventDefault();
+      return;
+    }
     const svgNode=e.target.closest('[data-id]');
-    if(svgNode)startNodeDrag(svgNode.getAttribute('data-id'),e.clientX,e.clientY);
+    if(svgNode){startNodeDrag(svgNode.getAttribute('data-id'),e.clientX,e.clientY);return}
+    const body=e.target.closest('#tree-body');
+    if(body){
+      const p=svgPoint(e.clientX,e.clientY);
+      state.panDrag={x:p.x,y:p.y,panX:state.pan.x,panY:state.pan.y};
+      body.classList.add('panning');
+      e.preventDefault();
+    }
   });
-  document.addEventListener('pointermove',function(e){updateNodeDrag(e.clientX,e.clientY)});
+  document.addEventListener('pointermove',function(e){
+    updateNodeDrag(e.clientX,e.clientY);
+    if(state.imagePan){
+      const frame=state.imagePan.frame;
+      frame.scrollLeft=state.imagePan.left-(e.clientX-state.imagePan.x);
+      frame.scrollTop=state.imagePan.top-(e.clientY-state.imagePan.y);
+      return;
+    }
+    if(state.panDrag){
+      const p=svgPoint(e.clientX,e.clientY);
+      state.pan.x=state.panDrag.panX+(p.x-state.panDrag.x);
+      state.pan.y=state.panDrag.panY+(p.y-state.panDrag.y);
+      applyTreeTransform();
+    }
+  });
   document.addEventListener('pointerup',function(e){
     const dragged=finishNodeDrag(e.clientX,e.clientY);
-    if(dragged)state._suppressClick=true;
+    if(state.imagePan){
+      const frame=state.imagePan.frame;
+      frame.classList.remove('panning');
+      try{frame.releasePointerCapture(e.pointerId)}catch(_){}
+      state.imagePan=null;
+    }
+    if(state.panDrag){
+      state.panDrag=null;
+      document.getElementById('tree-body')?.classList.remove('panning');
+    }
+    if(dragged){
+      state._suppressClick=true;
+      setTimeout(()=>{state._suppressClick=false},0);
+    }
   });
+  document.getElementById('tree-body').addEventListener('wheel',function(e){
+    e.preventDefault();
+    const anchor=svgPoint(e.clientX,e.clientY);
+    const factor=Math.exp(-e.deltaY*0.0012);
+    zoomAt(state.zoom*factor,anchor);
+  },{passive:false});
+  document.getElementById('compare-content').addEventListener('wheel',function(e){
+    const frame=e.target.closest('[data-compare-node-frame]');
+    if(!frame)return;
+    e.preventDefault();
+    const id=frame.getAttribute('data-compare-node-frame');
+    const r=frame.getBoundingClientRect();
+    frame._wheelX=e.clientX-r.left;
+    frame._wheelY=e.clientY-r.top;
+    const factor=Math.exp(-e.deltaY*0.0012);
+    setCompareNodeZoom(id,(state.compareImageZoomById[id]||1)*factor,frame);
+  },{passive:false});
   document.getElementById('lang-select').addEventListener('change',e=>{lang=e.target.value;localStorage.setItem('dashboard_lang',lang);applyLanguage();renderToolbar();renderDetail();renderCompare()});
   document.getElementById('tree-filter').addEventListener('change',e=>{state.filter=e.target.value||'all';renderSvg()});
   document.addEventListener('keydown',e=>{if(e.key==='Escape'){if(state.compareOpen){state.compareOpen=false;renderCompare()}else if(state.selected){state.selected=null;renderSvg();renderDetail()}}});
