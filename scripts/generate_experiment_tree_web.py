@@ -8,11 +8,13 @@ logs/figs/configs. It is safe to regenerate after every loop tick.
 from __future__ import annotations
 
 import argparse
+import base64
 import csv
 import hashlib
 import html
 import json
 import math
+import mimetypes
 import re
 import shutil
 import subprocess
@@ -26,6 +28,12 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUT = ROOT / "docs" / "autoresearch_dashboard" / "index.html"
 USER_SUMMARY = ROOT / "state" / "user_summary.md"
 USER_SUMMARIES = ROOT / "state" / "user_summaries.md"
+
+# Filename-extension allow-lists for `iter_fig_artifacts()`. Heavyweight
+# tensors (.pt) and other cache files are skipped on purpose — the dashboard
+# is meant for inspection, not bulk artifact distribution.
+IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"}
+FIG_ARTIFACT_EXTS = IMAGE_EXTS | {".csv", ".json", ".html", ".txt", ".md"}
 
 
 def _git_show_blob(branch: str, path: str) -> bytes | None:
@@ -254,6 +262,79 @@ def config_values(config_path: str) -> dict[str, str]:
     return vals
 
 
+def visual_label(rel_path: str) -> str:
+    """Human-friendly tab label from a viz file path under figs/iter_NNN/.
+
+    Maps known stems to nicer labels; falls back to the filename stem with
+    underscores/dashes turned into spaces. Adapt the `names` dict for your
+    project's viz scripts (e.g. add `"confusion_normalized": "confusion (norm)"`)."""
+    path = Path(rel_path)
+    stem = path.stem.lower()
+    names = {
+        "tsne": "t-SNE",
+        "cam": "Grad-CAM",
+        "per_class": "per-class",
+        "per_class_delta": "delta",
+        "confusion": "confusion",
+    }
+    label = names.get(stem, path.stem.replace("_", " ").replace("-", " "))
+    if len(path.parts) > 1:
+        parent = path.parent.as_posix().replace("_", " ").strip(" ./")
+        if parent and parent != ".":
+            label = f"{label} · {parent}"
+    return label
+
+
+def iter_fig_artifacts(iter_pad: str) -> list[tuple[str, str, bool]]:
+    """Return [(rel_path_under_iter_dir, label, is_image), ...] for one iter.
+
+    Source priority:
+      1. Working tree (figs/iter_NNN/) — recursive scan, picks up any viz
+         the project's scripts produced, not a hardcoded filename list.
+      2. autoresearch/iter-NNN branch — when git_iter_commit.sh has wiped
+         the iter's outputs from main but they still live on the branch.
+         Uses `git ls-tree -r` (cheap) and yields the same shape.
+
+    Heavyweight cache files (.pt) are skipped on purpose."""
+    fig_rel = f"figs/iter_{iter_pad}"
+    fig_dir = ROOT / fig_rel
+    artifacts: list[tuple[str, str, bool]] = []
+
+    # 1. Working tree scan (preferred — handles the latest iter)
+    if fig_dir.exists():
+        for path in sorted(fig_dir.rglob("*")):
+            if not path.is_file():
+                continue
+            suffix = path.suffix.lower()
+            if suffix not in FIG_ARTIFACT_EXTS:
+                continue
+            rel = path.relative_to(fig_dir).as_posix()
+            artifacts.append((rel, visual_label(rel), suffix in IMAGE_EXTS))
+        if artifacts:
+            return artifacts
+
+    # 2. Git-branch fallback (recovers older iters wiped by git_iter_commit.sh)
+    try:
+        result = subprocess.run(
+            ["git", "ls-tree", "-r", "--name-only",
+             f"autoresearch/iter-{iter_pad}", "--", fig_rel],
+            cwd=str(ROOT), capture_output=True, timeout=10, text=True,
+        )
+        if result.returncode == 0:
+            for line in result.stdout.splitlines():
+                line = line.strip()
+                if not line.startswith(fig_rel + "/"):
+                    continue
+                suffix = Path(line).suffix.lower()
+                if suffix not in FIG_ARTIFACT_EXTS:
+                    continue
+                rel = line[len(fig_rel) + 1:]
+                artifacts.append((rel, visual_label(rel), suffix in IMAGE_EXTS))
+    except (subprocess.SubprocessError, FileNotFoundError, OSError):
+        pass
+    return artifacts
+
+
 def group_for(exp_name: str, config: dict[str, str], iter_id: int) -> tuple[str, str, str]:
     """Map an experiment to a group node in the tree.
 
@@ -367,41 +448,17 @@ def build_iter_node(row: IterRow, parent_x: int, parent_y: int, idx: int, siblin
         links.append({"label": "report", "href": f"../logs/iteration_{iter_pad}.md"})
     if row.config and (ROOT / row.config).exists():
         links.append({"label": "config", "href": f"../{row.config}"})
-    fig_dir = ROOT / "figs" / f"iter_{iter_pad}"
     visuals = []
 
-    def _iter_artifact_exists(filename: str) -> bool:
-        """True if the iter has this artifact in working tree OR on its branch."""
-        if (fig_dir / filename).exists():
-            return True
-        # Cheap branch existence check via `git cat-file -e`.
-        try:
-            r = subprocess.run(
-                ["git", "cat-file", "-e", f"autoresearch/iter-{iter_pad}:figs/iter_{iter_pad}/{filename}"],
-                cwd=str(ROOT), capture_output=True, timeout=5,
-            )
-            return r.returncode == 0
-        except (subprocess.SubprocessError, FileNotFoundError, OSError):
-            return False
-
-    # Common viz filenames the dashboard looks for. Adapt this list for your
-    # project's viz scripts. Demo: tsne.png + cam.png + per_class.csv.
-    for filename, label in [
-        ("tsne.png", "t-SNE"),
-        ("cam.png", "Grad-CAM"),
-        ("per_class.png", "per-class"),
-        ("confusion.png", "confusion"),
-    ]:
-        if _iter_artifact_exists(filename):
-            href = f"../figs/iter_{iter_pad}/{filename}"
-            links.append({"label": label, "href": href})
+    # Recursively scan figs/iter_NNN/ (working tree first, autoresearch/iter-NNN
+    # branch second) for ANY viz file the project produced. Replaces the older
+    # hardcoded filename list — adding a new viz to your training pipeline now
+    # appears in the dashboard automatically without editing this script.
+    for filename, label, is_image in iter_fig_artifacts(iter_pad):
+        href = f"../figs/iter_{iter_pad}/{filename}"
+        links.append({"label": label, "href": href})
+        if is_image:
             visuals.append({"label": label, "href": href})
-    for filename, label in [
-        ("per_class.csv", "per-class"),
-        ("per_class_delta.csv", "delta"),
-    ]:
-        if _iter_artifact_exists(filename):
-            links.append({"label": label, "href": f"../figs/iter_{iter_pad}/{filename}"})
 
     x = parent_x + 340
     center = (sibling_count - 1) / 2.0
@@ -1234,18 +1291,22 @@ def _resolve_href(out_path: Path, href: str) -> Path | None:
 
 
 def bundle_assets(tree: dict[str, Any], out_path: Path, *,
-                  exclude_csv: bool = True, write_manifest: bool = False) -> Path:
+                  exclude_csv: bool = True, write_manifest: bool = False,
+                  embed_images: bool = True) -> Path:
     """Copy all linked artifacts into a folder next to the HTML and rewrite hrefs.
 
     Optimizations:
       • Content-hash dedup — two source files with identical bytes share ONE
         copy in the bundle. On large iter sets, this can save tens of MB.
+      • Visible images are embedded as data: URIs by default, so a single
+        index.html is self-contained (handy when you want to email or upload
+        the dashboard somewhere). Pass embed_images=False to keep them as
+        external asset files (smaller HTML, asset/ dir required to deploy).
       • CSVs (per_class.csv, per_class_delta*.csv) are skipped by default —
         they're data dumps, not web assets, and are still accessible from the
         repo if someone really wants them.
       • The unused manifest.json is no longer written.
     """
-    # hashlib already imported at module top
     asset_dir = out_path.parent / ("assets" if out_path.name == "index.html" else f"{out_path.stem}_assets")
     if asset_dir.exists():
         shutil.rmtree(asset_dir)
@@ -1254,7 +1315,7 @@ def bundle_assets(tree: dict[str, Any], out_path: Path, *,
     copied: dict[str, str] = {}      # cache key → bundled relpath
     by_hash: dict[str, str] = {}     # content-hash → bundled relpath
 
-    def copy_one(href: str, node_id: str) -> str:
+    def copy_one(href: str, node_id: str, *, embed: bool = False) -> str:
         """Resolve href → bundled relpath. Reads the source bytes from the
         working tree if present, otherwise falls back to autoresearch/iter-NNN
         branch via `git show` (because git_iter_commit.sh only restores the
@@ -1293,6 +1354,16 @@ def bundle_assets(tree: dict[str, Any], out_path: Path, *,
 
         if src_bytes is None:
             return href  # genuinely missing; leave broken href so the bug is visible
+
+        # Embed-mode: return a data: URI directly instead of writing to assets/.
+        # Only used for "visuals" (the inline <img>s on each node card), not
+        # for "links" (the download buttons), since data: URIs aren't great
+        # for "right-click → save as".
+        is_image = Path(src_name).suffix.lower() in IMAGE_EXTS
+        if embed and embed_images and is_image:
+            mime = mimetypes.guess_type(src_name)[0] or "application/octet-stream"
+            encoded = base64.b64encode(src_bytes).decode("ascii")
+            return f"data:{mime};base64,{encoded}"
 
         if cache_key in copied:
             return copied[cache_key]
@@ -1338,13 +1409,16 @@ def bundle_assets(tree: dict[str, Any], out_path: Path, *,
         node_id = str(node.get("id", "node"))
         new_links = []
         for item in node.get("links", []):
-            new_href = copy_one(str(item.get("href", "")), node_id)
+            # Links (download buttons) — keep as external files for right-click-save.
+            new_href = copy_one(str(item.get("href", "")), node_id, embed=False)
             if keep_or_drop(item, new_href):
                 new_links.append(item)
         node["links"] = dedup_by_href(new_links)
         new_visuals = []
         for item in node.get("visuals", []):
-            new_href = copy_one(str(item.get("href", "")), node_id)
+            # Visuals (inline previews) — embed as data: URIs when possible
+            # so the HTML is self-contained (only matters when embed_images=True).
+            new_href = copy_one(str(item.get("href", "")), node_id, embed=True)
             if keep_or_drop(item, new_href):
                 new_visuals.append(item)
         node["visuals"] = dedup_by_href(new_visuals)
@@ -1367,6 +1441,7 @@ def main() -> None:
     parser.add_argument("--no-bundle-assets", action="store_true", help="Do not copy linked resources next to the HTML")
     parser.add_argument("--include-csv", action="store_true", help="Include per_class*.csv data dumps in the bundle (default: skip — saves space)")
     parser.add_argument("--write-manifest", action="store_true", help="Write a manifest.json next to the bundle (default: skip — currently unused by the page)")
+    parser.add_argument("--external-images", action="store_true", help="Keep image previews as external asset files instead of embedding them as data: URIs into the HTML (default: embed — produces a self-contained index.html)")
     args = parser.parse_args()
 
     rows = read_state(Path(args.state))
@@ -1378,7 +1453,8 @@ def main() -> None:
     if not args.no_bundle_assets:
         asset_dir = bundle_assets(tree, out_path,
                                   exclude_csv=not args.include_csv,
-                                  write_manifest=args.write_manifest)
+                                  write_manifest=args.write_manifest,
+                                  embed_images=not args.external_images)
     write_html(tree, out_path)
     print(f"Wrote experiment tree webpage: {out_path}")
     if asset_dir is not None:
